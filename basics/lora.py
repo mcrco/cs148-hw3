@@ -8,6 +8,8 @@ from __future__ import annotations
 import torch
 import torch.nn as nn
 
+from basics.model import Head
+
 
 class LoRALinear(nn.Module):
     """Low-rank adapter wrapping an existing nn.Linear layer.
@@ -30,19 +32,26 @@ class LoRALinear(nn.Module):
 
     def __init__(self, base_layer: nn.Linear, rank: int, alpha: float) -> None:
         super().__init__()
+        if rank <= 0:
+            raise ValueError("rank must be positive")
         self.rank = rank
         self.alpha = alpha
         self.scaling = alpha / rank
         self.base_layer = base_layer
 
-        # TODO: freeze base_layer's parameters.
-        # TODO: create self.A (nn.Parameter, shape (rank, d_in), kaiming-uniform init).
-        # TODO: create self.B (nn.Parameter, shape (d_out, rank), zero init).
-        raise NotImplementedError
+        for p in base_layer.parameters():
+            p.requires_grad_(False)
+
+        A_weights = torch.empty((rank, base_layer.in_features))
+        B_weights = torch.zeros((base_layer.out_features, rank))
+        nn.init.kaiming_uniform_(A_weights)
+        self.A = nn.Parameter(A_weights)
+        self.B = nn.Parameter(B_weights)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # TODO: return base_layer(x) + scaling * (x @ A.T @ B.T)
-        raise NotImplementedError
+        orig = self.base_layer(x)
+        delta = self.scaling * (x @ self.A.T) @ self.B.T
+        return orig + delta
 
 
 def apply_lora_to_attention(model: nn.Module, rank: int, alpha: float) -> nn.Module:
@@ -61,7 +70,11 @@ def apply_lora_to_attention(model: nn.Module, rank: int, alpha: float) -> nn.Mod
                (e.g., a ViT).
         rank, alpha: Forwarded to LoRALinear.
     """
-    # TODO: implement.
-    # Hint: iterate model.named_modules(), check isinstance(m, Head), and
-    # set m.q_proj = LoRALinear(m.q_proj, rank, alpha) (and same for v_proj).
-    raise NotImplementedError
+    for p in model.parameters():
+        p.requires_grad_(False)
+
+    for m in model.modules():
+        if isinstance(m, Head):
+            m.q_proj = LoRALinear(m.q_proj, rank, alpha)
+            m.v_proj = LoRALinear(m.v_proj, rank, alpha)
+    return model
