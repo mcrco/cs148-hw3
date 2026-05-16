@@ -169,14 +169,15 @@ def main() -> None:
                         "vit": model.state_dict(),
                         "projection_heads": heads.state_dict(),
                         "logit_scale": logit_scale.detach().cpu(),
-                        "config": cfg,
                         "epoch": epoch + 1,
                         "val_zeroshot_acc": val_acc,
                     },
                     args.output_dir / "best.pt",
                 )
 
-    checkpoint = torch.load(args.output_dir / "best.pt", map_location=device)
+    checkpoint = torch.load(
+        args.output_dir / "best.pt", map_location=device, weights_only=True
+    )
     model.load_state_dict(checkpoint["vit"])
     heads.load_state_dict(checkpoint["projection_heads"])
     logit_scale.data.copy_(checkpoint["logit_scale"].to(device))
