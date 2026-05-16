@@ -11,6 +11,7 @@ import math
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 
 class ProjectionHeads(nn.Module):
@@ -31,13 +32,15 @@ class ProjectionHeads(nn.Module):
 
     def __init__(self, d_image: int, d_text: int, d_proj: int = 256) -> None:
         super().__init__()
-        # TODO: define self.image_proj, self.text_proj as nn.Linear(..., bias=False).
-        raise NotImplementedError
+        self.linear_image = nn.Linear(d_image, d_proj, bias=False)
+        self.linear_text = nn.Linear(d_text, d_proj, bias=False)
 
     def forward(
         self, image_embeds: torch.Tensor, text_embeds: torch.Tensor
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        raise NotImplementedError
+        xi = F.normalize(self.linear_image(image_embeds), dim=-1)
+        xt = F.normalize(self.linear_text(text_embeds), dim=-1)
+        return xi, xt
 
 
 def init_logit_scale() -> nn.Parameter:
@@ -70,5 +73,8 @@ def clip_loss(
     Returns:
         Scalar loss tensor.
     """
-    # TODO: implement.
-    raise NotImplementedError
+    sims = image_embeds @ text_embeds.T * torch.exp(logit_scale)
+    targets = torch.arange(len(sims), device=sims.device)
+    image_loss = F.cross_entropy(sims, targets)
+    text_loss = F.cross_entropy(sims.T, targets)
+    return 0.5 * (image_loss + text_loss)

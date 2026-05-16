@@ -43,7 +43,7 @@ def zeroshot_classification_accuracy(
         Accuracy as a float in [0, 1].
     """
     # Encode class prompts once.
-    text_embeds = text_encoder(class_prompts)
+    text_embeds = text_encoder(class_prompts).to(device)
     _, class_proj = projection_heads(
         torch.zeros(len(class_prompts), vit.d_model if hasattr(vit, "d_model") else 0,
                     device=text_embeds.device),
