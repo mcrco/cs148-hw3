@@ -39,7 +39,7 @@ class ProjectionHeads(nn.Module):
         self, image_embeds: torch.Tensor, text_embeds: torch.Tensor
     ) -> tuple[torch.Tensor, torch.Tensor]:
         xi = F.normalize(self.linear_image(image_embeds), dim=-1)
-        xt = F.normalize(self.linear_text(text_embeds), dim=-1)
+        xt = F.normalize(self.linear_text(text_embeds.clone()), dim=-1)
         return xi, xt
 
 
