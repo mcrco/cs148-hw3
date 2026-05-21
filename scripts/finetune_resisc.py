@@ -153,8 +153,9 @@ def main() -> None:
         dropout=vit_cfg["dropout"],
     )
     vit.load_state_dict(checkpoint["vit"])
-    model = ViTClassifier(vit, num_classes=cfg["num_classes"]).to(device)
+    model = ViTClassifier(vit, num_classes=cfg["num_classes"])
     configure_model(model, args.method, args.rank, args.alpha)
+    model = model.to(device)
 
     total_params, trainable_params = count_params(model)
     trainable = [p for p in model.parameters() if p.requires_grad]
