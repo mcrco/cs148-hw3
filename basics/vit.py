@@ -95,6 +95,7 @@ class ViT(nn.Module):
                 basics.model.Block(
                     d_model, num_heads, num_patches + 1, is_decoder=False, dropout=dropout
                 )
+                for _ in range(num_blocks)
             ]
         )
         self.ln = nn.LayerNorm(d_model)

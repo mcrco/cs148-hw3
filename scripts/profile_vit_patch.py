@@ -16,7 +16,7 @@ if __name__ == "__main__":
     steps = 20
     for ps in patch_sizes:
         vit = basics.vit.ViT(img_size, ps, d_model, num_heads, num_blocks)
-        x = torch.randn(batch_size, img_size, img_size)
+        x = torch.randn(batch_size, 3, img_size, img_size)
 
         for _ in range(warmup_steps):
             _ = vit(x)
