@@ -1,9 +1,20 @@
 # §5 — VLM training on CLEVR.
 
+vit:
+  img_size: 64
+  patch_size: 8
+  d_model: 384
+  num_heads: 6
+  num_blocks: 6
+  dropout: 0.1
+
 decoder:
   model_name: HuggingFaceTB/SmolLM2-360M-Instruct
   torch_dtype: bfloat16
   attn_implementation: flash_attention_2
+  lora:
+    rank: 8
+    alpha: 16.0
 
 projector:
   expansion: 4
