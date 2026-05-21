@@ -9,26 +9,22 @@ import torch
 import torch.nn as nn
 
 
-class RoPE1D(nn.Module):
-    """1D Rotary Position Embedding.
-
-    For a vector x at position m, RoPE groups dimensions into d/2 pairs and
-    rotates each pair (x_{2i}, x_{2i+1}) by angle m * theta_i, where
-        theta_i = base ** (-2i / head_dim).
-
-    Apply RoPE to queries and keys (not values) inside attention, before
-    computing q @ k^T.
+def _apply_rotation(x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor) -> torch.Tensor:
+    """Apply 2D rotation to paired dimensions.
 
     Args:
-        head_dim:    Dimensionality of each attention head. Must be even.
-        max_seq_len: Maximum sequence length to precompute angles for.
-        base:        Base of the geometric progression (typically 10_000).
-
-    Forward:
-        x:         (B, num_heads, T, head_dim)
-        positions: (T,) integer tensor of token positions.
-        returns:   (B, num_heads, T, head_dim) with RoPE applied.
+        x: (..., head_dim) with head_dim even.
+        cos, sin: broadcastable to (..., head_dim // 2).
     """
+    x_even = x[..., 0::2]
+    x_odd = x[..., 1::2]
+    rot_even = x_even * cos - x_odd * sin
+    rot_odd = x_even * sin + x_odd * cos
+    return torch.stack((rot_even, rot_odd), dim=-1).flatten(-2)
+
+
+class RoPE1D(nn.Module):
+    """1D Rotary Position Embedding."""
 
     def __init__(self, head_dim: int, max_seq_len: int, base: float = 10_000.0) -> None:
         super().__init__()
@@ -37,42 +33,23 @@ class RoPE1D(nn.Module):
         self.max_seq_len = max_seq_len
         self.base = base
 
-        # TODO: precompute cos and sin tables of shape (max_seq_len, head_dim // 2)
-        # and register them as non-persistent buffers.
-        # Hint:
-        #   inv_freq = base ** (-torch.arange(0, head_dim, 2).float() / head_dim)
-        #   t = torch.arange(max_seq_len).float()
-        #   freqs = torch.outer(t, inv_freq)              # (max_seq_len, head_dim // 2)
-        #   self.register_buffer("cos_cached", freqs.cos(), persistent=False)
-        #   self.register_buffer("sin_cached", freqs.sin(), persistent=False)
-        raise NotImplementedError
+        inv_freq = base ** (-torch.arange(0, head_dim, 2).float() / head_dim)
+        t = torch.arange(max_seq_len).float()
+        freqs = torch.outer(t, inv_freq)
+        self.register_buffer("cos_cached", freqs.cos(), persistent=False)
+        self.register_buffer("sin_cached", freqs.sin(), persistent=False)
 
     def forward(self, x: torch.Tensor, positions: torch.Tensor) -> torch.Tensor:
-        # TODO: implement.
-        # Hint: split x into even and odd indices along head_dim, look up
-        # cos/sin for the given positions, and apply the 2D rotation.
-        raise NotImplementedError
+        cos = self.cos_cached[positions]
+        sin = self.sin_cached[positions]
+        while cos.ndim < x.ndim:
+            cos = cos.unsqueeze(0)
+            sin = sin.unsqueeze(0)
+        return _apply_rotation(x, cos, sin)
 
 
 class RoPE2D(nn.Module):
-    """2D Rotary Position Embedding for image patches.
-
-    Splits head_dim in half. The first half rotates by the patch's x-coordinate
-    using 1D RoPE; the second half rotates by the patch's y-coordinate. After
-    rotation, dot products depend on the 2D *relative* offset between patches.
-
-    Args:
-        head_dim:  Must be divisible by 4 (since each half is split into
-                   real/imaginary pairs).
-        grid_size: Maximum grid side (patches per row).
-        base:      Base of the geometric progression.
-
-    Forward:
-        x:        (B, num_heads, T, head_dim)
-        x_coords: (T,) integer tensor of x positions on the grid.
-        y_coords: (T,) integer tensor of y positions on the grid.
-        returns:  (B, num_heads, T, head_dim) with 2D RoPE applied.
-    """
+    """2D Rotary Position Embedding for image patches."""
 
     def __init__(self, head_dim: int, grid_size: int, base: float = 10_000.0) -> None:
         super().__init__()
@@ -80,10 +57,19 @@ class RoPE2D(nn.Module):
         self.head_dim = head_dim
         self.grid_size = grid_size
         self.base = base
+        half_dim = head_dim // 2
+        quarter_dim = head_dim // 4
 
-        # TODO: precompute (cos, sin) for x and y separately, each of shape
-        # (grid_size, head_dim // 4). Register as buffers.
-        raise NotImplementedError
+        inv_freq = base ** (-torch.arange(0, half_dim, 2).float() / half_dim)
+        coords = torch.arange(grid_size).float()
+        freqs = torch.outer(coords, inv_freq)
+        cos = freqs.cos()
+        sin = freqs.sin()
+        self.register_buffer("cos_x", cos, persistent=False)
+        self.register_buffer("sin_x", sin, persistent=False)
+        self.register_buffer("cos_y", cos, persistent=False)
+        self.register_buffer("sin_y", sin, persistent=False)
+        self.quarter_dim = quarter_dim
 
     def forward(
         self,
@@ -91,7 +77,16 @@ class RoPE2D(nn.Module):
         x_coords: torch.Tensor,
         y_coords: torch.Tensor,
     ) -> torch.Tensor:
-        # TODO: split x along head_dim into two halves; apply 1D RoPE to the
-        # first half with x_coords and to the second half with y_coords;
-        # concatenate.
-        raise NotImplementedError
+        x_half, y_half = x.split(self.head_dim // 2, dim=-1)
+        cos_x = self.cos_x[x_coords]
+        sin_x = self.sin_x[x_coords]
+        cos_y = self.cos_y[y_coords]
+        sin_y = self.sin_y[y_coords]
+        while cos_x.ndim < x.ndim:
+            cos_x = cos_x.unsqueeze(0)
+            sin_x = sin_x.unsqueeze(0)
+            cos_y = cos_y.unsqueeze(0)
+            sin_y = sin_y.unsqueeze(0)
+        x_rot = _apply_rotation(x_half, cos_x, sin_x)
+        y_rot = _apply_rotation(y_half, cos_y, sin_y)
+        return torch.cat((x_rot, y_rot), dim=-1)

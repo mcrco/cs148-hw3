@@ -29,8 +29,39 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--config", type=Path, required=True)
     p.add_argument("--output-dir", type=Path, default=Path("runs/clip_eurosat"))
     p.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
+    p.add_argument(
+        "--pos-enc",
+        choices=["learned", "rope_1d", "rope_2d"],
+        default=None,
+        help="Positional encoding for ViT (default: vit.pos_encoding in config, else learned)",
+    )
+    p.add_argument(
+        "--max-img-size",
+        type=int,
+        default=None,
+        help="Max image side for RoPE caches / learned-PE extrapolation (default: max(train, eval) sizes)",
+    )
+    p.add_argument(
+        "--eval-img-size",
+        type=int,
+        default=96,
+        help="Image size for length-extrapolation zero-shot eval",
+    )
     p.add_argument("--wandb", action="store_true", help="Log to W&B")
     return p.parse_args()
+
+
+def build_vit(vit_cfg: dict, pos_encoding: str, max_img_size: int) -> ViT:
+    return ViT(
+        vit_cfg["img_size"],
+        vit_cfg["patch_size"],
+        vit_cfg["d_model"],
+        vit_cfg["num_heads"],
+        vit_cfg["num_blocks"],
+        vit_cfg["dropout"],
+        pos_encoding=pos_encoding,
+        max_img_size=max_img_size,
+    )
 
 
 def main() -> None:
@@ -62,17 +93,17 @@ def main() -> None:
     optim_cfg = cfg["optim"]
     train_cfg = cfg["train"]
 
+    pos_encoding = args.pos_enc or vit_cfg.get("pos_encoding", "learned")
+    train_img_size = vit_cfg["img_size"]
+    max_img_size = args.max_img_size or max(train_img_size, args.eval_img_size)
+
     train_dl, val_dl, test_dl = build_eurosat_loaders(
-        vit_cfg["img_size"], train_cfg["batch_size"], train_cfg["num_workers"]
+        train_img_size, train_cfg["batch_size"], train_cfg["num_workers"]
     )
-    model = ViT(
-        vit_cfg["img_size"],
-        vit_cfg["patch_size"],
-        vit_cfg["d_model"],
-        vit_cfg["num_heads"],
-        vit_cfg["num_blocks"],
-        vit_cfg["dropout"],
-    ).to(device)
+    extrap_val_dl, _, _ = build_eurosat_loaders(
+        args.eval_img_size, train_cfg["batch_size"], train_cfg["num_workers"]
+    )
+    model = build_vit(vit_cfg, pos_encoding, max_img_size).to(device)
     text_encoder = FrozenTextEncoder(text_cfg["model_name"]).to(device)
     text_encoder.eval()  # never in train mode
     heads = ProjectionHeads(
@@ -171,6 +202,8 @@ def main() -> None:
                         "logit_scale": logit_scale.detach().cpu(),
                         "epoch": epoch + 1,
                         "val_zeroshot_acc": val_acc,
+                        "pos_encoding": pos_encoding,
+                        "vit_config": {**vit_cfg, "pos_encoding": pos_encoding, "max_img_size": max_img_size},
                     },
                     args.output_dir / "best.pt",
                 )
@@ -190,9 +223,31 @@ def main() -> None:
         class_indices,
         device,
     )
-    print(f"best_val_zeroshot_acc={best_val_acc:.4f} test_zeroshot_acc={test_acc:.4f}")
+    extrap_val_acc = zeroshot_classification_accuracy(
+        model,
+        heads,
+        text_encoder,
+        extrap_val_dl,
+        class_prompts,
+        class_indices,
+        device,
+    )
+    print(
+        f"pos_encoding={pos_encoding} "
+        f"best_val_zeroshot_acc={best_val_acc:.4f} "
+        f"test_zeroshot_acc={test_acc:.4f} "
+        f"extrap_val_zeroshot_acc={extrap_val_acc:.4f} "
+        f"(eval_img_size={args.eval_img_size})"
+    )
     if args.wandb:
-        wandb.log({"test/zeroshot_acc": test_acc, "best_val/zeroshot_acc": best_val_acc})
+        wandb.log(
+            {
+                "test/zeroshot_acc": test_acc,
+                "best_val/zeroshot_acc": best_val_acc,
+                "extrap_val/zeroshot_acc": extrap_val_acc,
+                "eval_img_size": args.eval_img_size,
+            }
+        )
 
 
 if __name__ == "__main__":
