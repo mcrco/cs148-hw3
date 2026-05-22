@@ -221,9 +221,15 @@ def main() -> None:
 
     dtype_name = decoder_cfg["torch_dtype"]
     torch_dtype = getattr(torch, dtype_name) if device.type == "cuda" else torch.float32
-    model_kwargs = {"torch_dtype": torch_dtype}
+    model_kwargs = {"dtype": torch_dtype}
     if device.type == "cuda":
-        model_kwargs["attn_implementation"] = decoder_cfg["attn_implementation"]
+        attn_implementation = decoder_cfg["attn_implementation"]
+        if args.mask_mode == "image_bidir" and attn_implementation == "flash_attention_2":
+            # FlashAttention-2 cannot consume the custom 4D additive mask used for
+            # bidirectional image attention.
+            attn_implementation = "eager"
+            print("Using eager decoder attention because image_bidir needs a custom 4D mask.")
+        model_kwargs["attn_implementation"] = attn_implementation
 
     decoder = AutoModelForCausalLM.from_pretrained(decoder_cfg["model_name"], **model_kwargs)
     decoder.to(device)
@@ -269,7 +275,7 @@ def main() -> None:
     )
 
     scaler_enabled = device.type == "cuda" and torch_dtype == torch.float16
-    scaler = torch.cuda.amp.GradScaler(enabled=scaler_enabled)
+    scaler = torch.amp.GradScaler("cuda", enabled=scaler_enabled)
     autocast_dtype = torch_dtype if device.type == "cuda" else torch.bfloat16
     grad_accum = train_cfg["gradient_accumulation_steps"]
     best_val_acc = -1.0
