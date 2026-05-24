@@ -321,6 +321,7 @@ Consider a 224 $times$ 224 RGB image and patch sizes $P in {8,16,32}$.
     1. Use images where there are only 1 simple object. If this fails, then the encoder is probably at fault for not learning anything useful.
     2. Try a more powerful/bigger encoder architecture. If this improves performance, than the encoder is at fault.
     3. Same thing as above but for the decoder.
+    4. Also try to turn the dataset into a classification task, where we use the encoder embeddings. This should shed some light on how good the encoder embeddings are.
   ]
 ]
 
@@ -397,15 +398,5 @@ Consider a 224 $times$ 224 RGB image and patch sizes $P in {8,16,32}$.
 
   #ans[
     Three chunks let RoPE encode modality/temporal progression separately from horizontal and vertical coordinates. If we only used $(x, y)$, text tokens would not have a distinct way to advance a temporal index independently of spatial coordinates, and image vs. text tokens could collide in position space; the model would struggle to distinguish "next word in the prompt" from "different patch coordinate".
-  ]
-]
-
-=== 6.3 Implementing M-RoPE (Bonus)
-
-+ #qs[
-  Implement an M-RoPE-style position assignment for your VLM. Retrain the best configuration from §5 for 1500 steps, using (a) naive 1D position IDs and (b) M-RoPE-style position IDs. Does M-RoPE improve CLEVR accuracy? Does it help more on questions that refer to spatial relations ("left of", "behind", "in front of") than on other questions?
-
-  #ans[
-    Not attempted (bonus).
   ]
 ]
